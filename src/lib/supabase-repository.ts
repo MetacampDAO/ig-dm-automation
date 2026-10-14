@@ -9,6 +9,7 @@ function check<T>(data: T | null, error: { message: string; code?: string; detai
   if (data === null) throw new Error('Database returned no row');
   return data;
 }
+const RATE_LIMIT_RETENTION_MS = 2 * 3_600_000;
 function unique(error: { code?: string } | null): boolean { return error?.code === '23505'; }
 export class SupabaseRepository implements Repository {
   private db = serviceDb();
@@ -55,6 +56,8 @@ export class SupabaseRepository implements Repository {
   async scheduleRecheck(conversationId: string, dueAt: string) { const r = await this.db.from('follow_rechecks').upsert({ conversation_id: conversationId, due_at: dueAt, claimed_at: null }, { onConflict: 'conversation_id' }); if (r.error) throw databaseError(r.error); }
   async dueRechecks() { const { data, error } = await this.db.from('follow_rechecks').select('conversation_id').lte('due_at', new Date().toISOString()).is('claimed_at', null).limit(20); if (error) throw databaseError(error); return (data ?? []).map((v) => v.conversation_id as string); }
   async claimRecheck(conversationId: string) { const { data, error } = await this.db.from('follow_rechecks').update({ claimed_at: new Date().toISOString() }).eq('conversation_id', conversationId).lte('due_at', new Date().toISOString()).is('claimed_at', null).select('conversation_id').maybeSingle(); if (error) throw databaseError(error); return !!data; }
-  async purge() { const { data, error } = await this.db.from('settings').select('retention_days').eq('id', true).single(); const days = check(data, error).retention_days as number; const before = new Date(Date.now() - days * 86_400_000).toISOString(); for (const [table, timestamp] of [['unmatched_inbound', 'received_at'], ['webhook_events', 'received_at'], ['raw_webhook_debug', 'received_at'], ['audit_log', 'created_at']]) { const r = await this.db.from(table).delete().lt(timestamp, before); if (r.error) throw databaseError(r.error); } }
+  async rateLimitHit(key: string, route: string, limit: number, windowSeconds: number) { const { data, error } = await this.db.rpc('rate_limit_hit', { p_key: key, p_route: route, p_limit: limit, p_window_seconds: windowSeconds }); if (error) throw databaseError(error); const row = (data as Array<{ allowed: boolean; count: number }> | null)?.[0]; if (!row) throw new Error('Database returned no row'); return { allowed: row.allowed, count: row.count }; }
+  async rateLimitBlockedLastHour() { const { data, error } = await this.db.rpc('rate_limit_blocked_last_hour'); if (error) throw databaseError(error); return typeof data === 'number' ? data : 0; }
+  async purge() { const { data, error } = await this.db.from('settings').select('retention_days').eq('id', true).single(); const days = check(data, error).retention_days as number; const before = new Date(Date.now() - days * 86_400_000).toISOString(); for (const [table, timestamp] of [['unmatched_inbound', 'received_at'], ['webhook_events', 'received_at'], ['raw_webhook_debug', 'received_at'], ['audit_log', 'created_at']]) { const r = await this.db.from(table).delete().lt(timestamp, before); if (r.error) throw databaseError(r.error); } const limits = await this.db.from('rate_limits').delete().lt('window_start', new Date(Date.now() - RATE_LIMIT_RETENTION_MS).toISOString()); if (limits.error) throw databaseError(limits.error); }
   async debugEnvelope(envelope: unknown) { const r = await this.db.from('raw_webhook_debug').insert({ envelope }); if (r.error) throw databaseError(r.error); }
 }

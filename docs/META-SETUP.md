@@ -2,7 +2,7 @@
 
 This project uses **Instagram API with Instagram Login** on `graph.instagram.com`. It does not use a Facebook Page token. The [README](../README.md) is the one ordered setup sequence and holds the only environment table; this page is the detail for the Meta dashboard, app roles and the SQL fallbacks. Dashboard labels change, so treat the wording below as a guide and check [META-API-NOTES.md](META-API-NOTES.md) for the underlying endpoints.
 
-Apply **all five migrations** before you deploy. The admin pages read revision, role and post-caption columns and call RPCs that only exist after `0005`.
+Apply **all six migrations** before you deploy. The admin pages read revision, role and post-caption columns and call RPCs that only exist after `0005`. The rate limiter needs `0006`.
 
 ## 1. Meta App Dashboard
 

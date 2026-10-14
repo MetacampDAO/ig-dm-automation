@@ -78,6 +78,9 @@ export class MemoryRepository implements Repository {
   async scheduleRecheck(conversationId: string, dueAt: string) { this.rechecks = this.rechecks.filter((r) => r.id !== conversationId); this.rechecks.push({ id: conversationId, due: dueAt, claimed: false }); }
   async dueRechecks() { return this.rechecks.filter((r) => !r.claimed && new Date(r.due).getTime() <= Date.now()).map((r) => r.id); }
   async claimRecheck(conversationId: string) { const row=this.rechecks.find((r)=>r.id===conversationId && !r.claimed && new Date(r.due).getTime()<=Date.now()); if(!row) return false; row.claimed=true; return true; }
-  async purge() { return; }
+  rateLimits = new Map<string, { windowStart: number; count: number; blocked: number }>();
+  async rateLimitHit(key: string, route: string, limit: number, windowSeconds: number) { const windowStart = Math.floor(Date.now() / 1000 / windowSeconds) * windowSeconds * 1000; const id = `${key}|${route}|${windowStart}`; const row = this.rateLimits.get(id) ?? { windowStart, count: 0, blocked: 0 }; row.count++; if (row.count > limit) row.blocked++; this.rateLimits.set(id, row); return { allowed: row.count <= limit, count: row.count }; }
+  async rateLimitBlockedLastHour() { let total = 0; for (const row of this.rateLimits.values()) if (row.windowStart >= Date.now() - 3_600_000) total += row.blocked; return total; }
+  async purge() { for (const [id, row] of this.rateLimits) if (row.windowStart < Date.now() - 2 * 3_600_000) this.rateLimits.delete(id); }
   async debugEnvelope(v: unknown) { this.envelopes.push(v); }
 }

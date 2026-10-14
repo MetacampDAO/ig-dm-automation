@@ -58,6 +58,8 @@ export interface Repository {
   scheduleRecheck(conversationId: string, dueAt: string): Promise<void>;
   dueRechecks(): Promise<string[]>;
   claimRecheck(conversationId: string): Promise<boolean>;
+  rateLimitHit(key: string, route: string, limit: number, windowSeconds: number): Promise<{ allowed: boolean; count: number }>;
+  rateLimitBlockedLastHour(): Promise<number>;
   purge(): Promise<void>;
   debugEnvelope(envelope: unknown): Promise<void>;
 }
