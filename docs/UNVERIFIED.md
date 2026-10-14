@@ -1,0 +1,40 @@
+# Unverified live Meta behaviour
+
+Fixture tests exercise the code with `META_MOCK=1`. The items below depend on Meta's live behaviour and your account's access level, so run each exact test once on your own deployment before relying on it. Record redacted results for your own records.
+
+## Observed in production
+
+The initial private reply accepted the button template, and tapping the button produced a `messaging_postbacks` event. New opening campaigns therefore default to the button; the text fallback remains for a Meta 4xx rejection. Follow-status consent after the postback remains separately unverified below.
+
+## Remaining live checks
+
+| Behaviour not yet proven | Exact live test |
+|---|---|
+| API-published public comment replies: accepted JSON body versus `message` query parameter, `{ id }` response shape, rate limits, mobile threading, and own-reply webhook | On a designated test comment after the private DM is accepted, POST `/{ig-comment-id}/replies` with a JSON `{ "message": "..." }` body and redacted logs. Record whether Meta instead requires a `message` query parameter, the response fields and reply ID, and any throttling response or published limit. On Instagram mobile, confirm the reply threads under the commenter's comment. Check whether that reply generates a `comments` webhook and, if so, whether the own-account guard ignores it. |
+| `comments` webhooks under Standard Access for non-testers | Use an ordinary Instagram account with no app role to comment on a designated post while the app is in its intended access mode. Confirm a signed `comments` event arrives, is stored, and produces one private reply. If absent, inspect App Review/access mode and resolve before launch. |
+| Requests-folder delivery and visibility | From a non-follower ordinary account, comment and inspect the Instagram mobile inbox/Requests folder. Capture a redacted screenshot showing where the private reply appears; compare to Meta API acceptance. |
+| `META_API_VERSION=v25.0` support for this app | With `META_MOCK=0`, call comment timestamp lookup, private reply, user profile follow check, and ordinary send using the configured version. Record redacted response codes and IDs; adjust the version only after confirming Meta's current supported version. |
+| Exact `comments` payload shape, timestamp, and commenter ID | Capture one real signed webhook envelope in a controlled test, redact IDs/text, and compare `entry[].changes[].value` with `src/lib/events.ts`. Confirm whether `value.timestamp` is present; if absent confirm GET `/{comment_id}?fields=timestamp` works. Disable `DEBUG_RAW_EVENTS` after inspection. |
+| Unrecognised atomic event shapes | Send a signed controlled fixture with a malformed `comments` value or unfamiliar `messaging` item and confirm HTTP 200 after a minimal hashed event row is stored, followed by `process_error`. For a real Meta variation, briefly enable `DEBUG_RAW_EVENTS=1` under restricted access, inspect the envelope, update the parser, then disable and purge raw debug rows. |
+| Postback and SEND consent for `is_user_follow_business` | On a follow-required test campaign, use separate ordinary accounts to reply SEND and to tap the experimental postback. Confirm GET `/{igsid}?fields=is_user_follow_business` returns a boolean only after each interaction; test an absent field/error and confirm no unlock. |
+| `is_user_follow_business` under Standard Access for non-testers | With the app at Standard Access, use an ordinary non-tester after SEND or a valid postback. Record whether the field is available, denied, or absent; resolve access before enabling follow-required delivery. |
+| Webhook `entry.id` identity | Compare a redacted real webhook `entry.id` with `user_id` from `/me?fields=user_id,username` and any app-scoped ID returned by Meta. Confirm which ID the webhook uses before live routing. |
+| Bearer authentication on `graph.instagram.com` messaging endpoints | With a test token, call `/messages` and `/subscribed_apps` using `Authorization: Bearer`; if rejected, test the documented `access_token` query parameter with redacted logs and record the accepted form. |
+| Comment `from.id` versus messaging IGSID | From one ordinary account, compare redacted `comments.value.from.id` with the later `messaging.sender.id` and private-reply `recipient_id`. Confirm whether they are identical before relying on pre-inbound identity matching. |
+| True/false propagation after following | From a non-follower, tap continue, inspect false and follow prompt, follow the account, tap **I've followed**, and confirm a fresh true result and one delivery. Repeat a tap and confirm no duplicate. Confirm the one delayed 20-second recheck does not send another prompt. |
+| 7-day and 24-hour provider timestamps | Use controlled aged fixtures in tests, then inspect real webhook timestamps and a real accepted/declined edge-case send only if Meta permits an authorised safe test. Never infer windows from receipt time. |
+| Private-reply and ordinary button-template rendering | On Instagram mobile, inspect text, links, buttons, and full URLs. Verify each destination opens the page you intend. |
+| Token lifecycle and permission failures | Store an actual long-lived token, record its real expiry, refresh only after 24 hours, and confirm refresh extends expiry. With a safely revoked test token, verify a 190/invalid-token error becomes `reconnect_required`. |
+| Webhook subscription readback and live runner | Execute the account-level subscription script and retain redacted POST/GET results. Trigger an event; confirm `after()` attempts it, then queue a due action and confirm `pg_cron`/`pg_net` calls `/api/jobs/run` with the header and processes it inside the 24-hour window. |
+| Supabase migration and RLS | Apply all migrations in the intended project. From an anon/authenticated client, select each app table and confirm zero rows/denial; from service role confirm writes. Exercise `claim_outbound`, `advance_conversation`, and cron configuration. |
+| Admin session and 403 response | Create an admin user with signups disabled. Confirm allow-listed login renders `/admin`; confirm anonymous redirect to login and logged-in non-listed user receives HTTP 403, including direct server-action calls. |
+| Other connected responder overlap | On the target post, inspect existing Business Suite or third-party auto-responder rules with the account owner. Disable only the overlapping response with approval, then run one comment and confirm exactly one private reply. |
+
+## Campaign editor, pending live check
+
+| Behaviour not yet proven | Exact live test |
+|---|---|
+| Owned media listing for post-link resolution | With `META_MOCK=0` and the connected account token, resolve one owned feed post and one owned Reel using their public URLs. Confirm `GET /me/media?fields=id,permalink,caption,timestamp&limit=50`, cursor pagination, exact shortcode match, returned ID, permalink, and first caption line. Confirm an unknown or foreign link saves nothing. If this endpoint fails, an approver can set the media by privileged SQL (see META-SETUP.md); no media ID form field is exposed. |
+| Migration `0005` and revision-bound review | Apply `0005` in the intended project. Smoke-test role RLS/revokes, edit reset, review stamping, status transitions, same-media collision, and the draft delete guard with SQL as service role and as anon. |
+| Admin roles and server actions | Create an allow-listed editor and approver, then call setup, review, status, delete and archive actions directly as the editor; confirm 403 and no database change. Confirm editor IGSIDs are masked and bootstrap banner disappears after the first `admin_roles` row. |
+| Connection panel and UI on a deployed browser | Confirm account state, token expiry, last webhook, last sent action, last failed/uncertain action and job runner readback with actual data. In `META_MOCK=1`, each unproven health value must say “not tested”. Verify preview and copy counts on a phone. |

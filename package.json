@@ -1,0 +1,40 @@
+{
+  "name": "ig-dm-automation",
+  "version": "0.1.0",
+  "description": "Instagram comment-to-DM automation with an admin campaign editor (Next.js, Supabase, Meta Instagram API).",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "seed": "tsx scripts/seed.ts",
+    "exchange-token": "tsx scripts/exchange-token.ts",
+    "refresh-token": "tsx scripts/refresh-token.ts",
+    "subscribe-webhooks": "tsx scripts/subscribe-webhooks.ts",
+    "delete-user": "tsx scripts/delete-user.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.0",
+    "next": "^15.5.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  },
+  "overrides": {
+    "postcss": "^8.5.28"
+  }
+}

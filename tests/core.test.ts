@@ -1,0 +1,28 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import { signBody, verifySignature } from '../src/lib/meta/signature';
+import { matchesKeyword, normalize } from '../src/lib/keyword';
+import { messageAllowed, privateReplyAllowed } from '../src/lib/windows';
+import { env, resetEnvForTests } from '../src/lib/env';
+import { authorizeAdmin, AdminAuthError } from '../src/lib/admin';
+import { validateCampaignCopy } from '../src/lib/copy';
+import { DISCLOSURE, DISCLOSURE_URL, OTHER_URL, setDisclosureEnv } from './disclosure-fixture';
+import type { Campaign } from '../src/lib/repository';
+import { exampleCampaignSeed, EXAMPLE_LINK_URL, EXAMPLE_SECOND_LINK_URL } from '../src/lib/seed-data';
+
+beforeEach(() => { process.env.META_APP_ID='mock'; process.env.META_APP_SECRET='secret'; process.env.WEBHOOK_VERIFY_TOKEN='verify'; process.env.SUPABASE_URL='https://example.supabase.co'; process.env.SUPABASE_SERVICE_ROLE_KEY='placeholder'; process.env.SUPABASE_ANON_KEY='placeholder'; process.env.ADMIN_EMAILS='admin@example.com'; process.env.META_MOCK='1'; process.env.TOKEN_ENCRYPTION_KEY=Buffer.alloc(32,1).toString('base64'); process.env.OPTOUT_HASH_KEY=Buffer.alloc(32,2).toString('base64'); process.env.JOB_SECRET='test-job-secret-long-enough-123456'; process.env.APP_URL='https://app.example.com'; setDisclosureEnv(); resetEnvForTests(); });
+describe('signature and environment', () => {
+  it('accepts exact raw bytes and rejects changed or malformed signatures', () => { const body='{"x":1}'; const sig=signBody(body,'secret'); expect(verifySignature(body,sig,'secret')).toBe(true); expect(verifySignature(' {"x":1}',sig,'secret')).toBe(false); expect(verifySignature(body,'sha256=no','secret')).toBe(false); expect(verifySignature(body,null,'secret')).toBe(false); });
+  it('fails loudly for missing/invalid env', () => { delete process.env.META_APP_SECRET; expect(() => env()).toThrow(/META_APP_SECRET/); process.env.META_APP_SECRET='secret'; process.env.TOKEN_ENCRYPTION_KEY='bad'; expect(() => env()).toThrow(/TOKEN_ENCRYPTION_KEY/); });
+  it('requires a 32-character job secret and separate 32-byte opt-out key', () => { process.env.JOB_SECRET='short'; expect(() => env()).toThrow(/JOB_SECRET/); process.env.JOB_SECRET='test-job-secret-long-enough-123456'; process.env.OPTOUT_HASH_KEY='bad'; expect(() => env()).toThrow(/OPTOUT_HASH_KEY/); });
+  it('requires APP_URL to be an HTTPS origin', () => { process.env.APP_URL='http://app.example.com'; expect(() => env()).toThrow(/APP_URL/); process.env.APP_URL='https://app.example.com/path'; expect(() => env()).toThrow(/APP_URL/); });
+});
+describe('keyword and windows', () => {
+  it('normalizes and matches whole phrase variants', () => { expect(normalize('  ai---courses! ')).toBe('AI COURSES'); for (const s of ['AI COURSES please','ai  courses!','MY AI COURSES ARE GREAT','AI COURSE']) expect(matchesKeyword(s,['AI COURSES','AI COURSE'])).toBe(true); expect(matchesKeyword('AICOURSES',['AI COURSES'])).toBe(false); expect(matchesKeyword('AI COUESES',['AI COURSES'])).toBe(false); expect(matchesKeyword('AI COUESES',['AI COURSES'],true)).toBe(true); });
+  it('uses provider windows including delayed and future timestamps', () => { const now=new Date('2026-09-24T00:00:00Z'); expect(privateReplyAllowed('2026-09-17T00:00:00Z',now)).toBe(true); expect(privateReplyAllowed('2026-09-16T23:59:59Z',now)).toBe(false); expect(messageAllowed('2026-09-23T00:00:00Z',now)).toBe(true); expect(messageAllowed('2026-09-22T23:59:59Z',now)).toBe(false); expect(messageAllowed('2026-09-25T00:00:00Z',now)).toBe(false); });
+  it('allows up to 30 seconds of future clock skew', () => { const now=new Date('2026-09-24T00:00:00Z'); expect(privateReplyAllowed('2026-09-24T00:00:30Z',now)).toBe(true); expect(privateReplyAllowed('2026-09-24T00:00:31Z',now)).toBe(false); expect(messageAllowed('2026-09-24T00:00:30Z',now)).toBe(true); expect(messageAllowed('2026-09-24T00:00:31Z',now)).toBe(false); });
+});
+describe('admin and copy gates', () => {
+  it('denies anonymous and nonlisted users', () => { expect(() => authorizeAdmin(undefined,['admin@example.com'])).toThrow(AdminAuthError); expect(() => authorizeAdmin('other@example.com',['admin@example.com'])).toThrowError(/Forbidden/); expect(() => authorizeAdmin('ADMIN@example.com',['admin@example.com'])).not.toThrow(); });
+  it('requires disclosure, links, media and length', () => { const c = { media_id: 'post', keywords: ['GUIDE'], require_follow: false, delivery_style: 'direct', direct_text: `${OTHER_URL} ${DISCLOSURE_URL} ${DISCLOSURE}`, delivery_text: DISCLOSURE, opening_text: 'SEND', opening_button_text: 'Tap', follow_opening_text: 'Follow then SEND', follow_opening_button_text: 'Follow then tap', follow_prompt_text:'Follow', follow_retry_text:'Check again', follow_unknown_text:'Try again', delivery_buttons: [{type:'web_url',title:'Guide',url:OTHER_URL}] } as Campaign; expect(() => validateCampaignCopy(c)).not.toThrow(); expect(() => validateCampaignCopy({...c,direct_text:`${DISCLOSURE_URL} bad`})).toThrow(/disclosure/); expect(() => validateCampaignCopy({...c,media_id:null})).toThrow(/post link/); });
+  it('seeds the example campaign unapproved with distinct destinations', () => { const seed=exampleCampaignSeed('account',null,null); expect(seed.status).toBe('draft'); expect(seed.copy_approved).toBe(false); expect(seed.links_verified).toBe(false); expect(seed.comparison_checked_at).toBeNull(); expect(seed.comparison_sources.length).toBeGreaterThan(0); expect(seed.require_follow).toBe(false); expect(seed.delivery_buttons.map((b)=>b.url)).toEqual([EXAMPLE_LINK_URL,EXAMPLE_SECOND_LINK_URL]); expect(seed.name).toBe('Example: comment GUIDE'); expect(seed.follow_profile_url).toBe('https://www.instagram.com/yourhandle/'); });
+});
