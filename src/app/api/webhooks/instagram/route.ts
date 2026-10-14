@@ -9,11 +9,10 @@ export const maxDuration = 30;
 export function GET(req: Request): Response { return verifyChallenge(new URL(req.url)); }
 export async function POST(req: Request): Promise<Response> {
   const repo = new SupabaseRepository();
-  if (!await rateLimit('webhook', clientKey(req.headers), repo)) return tooManyRequests();
   return receiveWebhook(req, repo, (ids) => {
     for (const id of ids) after(async () => {
       try { await processStoredEvent(repo, id); }
       catch (error) { console.error('Webhook processing failed', id, error instanceof Error ? error.message : String(error)); }
     });
-  });
+  }, async () => await rateLimit('webhook', clientKey(req.headers), repo) ? undefined : tooManyRequests());
 }

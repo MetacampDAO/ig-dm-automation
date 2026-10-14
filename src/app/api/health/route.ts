@@ -1,12 +1,14 @@
 import { env } from '@/lib/env';
 import { serviceDb } from '@/lib/supabase';
+import { clientKey, rateLimit, tooManyRequests } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 async function blockedLastHour(db: ReturnType<typeof serviceDb>): Promise<number> {
   try { const blocked = await db.rpc('rate_limit_blocked_last_hour'); return !blocked.error && typeof blocked.data === 'number' ? blocked.data : 0; } catch { return 0; }
 }
-export async function GET(): Promise<Response> {
+export async function GET(req: Request): Promise<Response> {
+  if (!await rateLimit('health', clientKey(req.headers))) return tooManyRequests();
   const ts = new Date().toISOString();
   try {
     const db = serviceDb();

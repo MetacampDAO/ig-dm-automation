@@ -25,10 +25,13 @@ async function boundedBody(req: Request): Promise<Buffer | null> {
   }
   return Buffer.concat(chunks);
 }
-export async function receiveWebhook(req: Request, repo: Repository, schedule: (ids: string[]) => void): Promise<Response> {
+export async function receiveWebhook(req: Request, repo: Repository, schedule: (ids: string[]) => void, onInvalidSignature?: () => Promise<Response | undefined>): Promise<Response> {
   const bytes = await boundedBody(req);
   if (!bytes) return new Response('Payload too large', { status: 413 });
-  if (!verifySignature(bytes, req.headers.get('x-hub-signature-256'), env().META_APP_SECRET)) return new Response('Unauthorized', { status: 401 });
+  if (!verifySignature(bytes, req.headers.get('x-hub-signature-256'), env().META_APP_SECRET)) {
+    const blocked = await onInvalidSignature?.();
+    return blocked ?? new Response('Unauthorized', { status: 401 });
+  }
   const raw = bytes.toString('utf8');
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { return new Response('Malformed JSON', { status: 400 }); }

@@ -1,14 +1,16 @@
 import type { Repository } from './repository';
 import { SupabaseRepository } from './supabase-repository';
 
-export type RateLimitRoute = 'login' | 'webhook' | 'job';
+export type RateLimitRoute = 'login' | 'webhook' | 'job' | 'health';
 export const RATE_LIMITS: Record<RateLimitRoute, { limit: number; window: number }> = {
   login: { limit: 10, window: 60 }, // a person types a password a few times a minute
-  webhook: { limit: 600, window: 60 }, // Meta can burst from a handful of addresses; keep well above any real burst
+  webhook: { limit: 60, window: 60 }, // only bad signatures count; valid Meta events are never throttled
   job: { limit: 12, window: 60 }, // pg_cron calls once a minute; allow retries
+  health: { limit: 60, window: 60 }, // public read-only endpoint that costs three database calls
 };
 // Login fails closed: if the counter is unavailable, denying sign-in is safer than allowing unlimited password guesses.
 // Webhook and job fail open: the counter is not what authenticates them (signature and secret are), and Meta deliveries must not be dropped because of a counter outage.
+// Health fails open so the uptime check keeps answering when the counter is unavailable.
 const FAIL_CLOSED: ReadonlySet<RateLimitRoute> = new Set(['login']);
 const MAX_KEY_LENGTH = 64;
 
