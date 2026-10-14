@@ -27,7 +27,7 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('limits and keys', () => {
-  it('keeps the webhook limit well above any real Meta burst', () => { expect(RATE_LIMITS.webhook.limit).toBeGreaterThanOrEqual(300); expect(RATE_LIMITS).toMatchObject({ login: { limit: 10, window: 60 }, webhook: { limit: 600, window: 60 }, job: { limit: 12, window: 60 } }); });
+  it('limits bad webhook signatures and the public health check', () => { expect(RATE_LIMITS).toMatchObject({ login: { limit: 10, window: 60 }, webhook: { limit: 60, window: 60 }, job: { limit: 12, window: 60 }, health: { limit: 60, window: 60 } }); });
   it('takes the first forwarded address, then the real-ip header, then unknown', () => {
     expect(clientKey(new Headers({ 'x-forwarded-for': '203.0.113.9, 10.0.0.1', 'x-real-ip': '198.51.100.1' }))).toBe('203.0.113.9');
     expect(clientKey(new Headers({ 'x-real-ip': '198.51.100.1' }))).toBe('198.51.100.1');
@@ -109,15 +109,22 @@ describe('call sites', () => {
     await expect(login(loginForm())).rejects.not.toThrow(/Too many attempts/);
     expect(state.anon).not.toHaveBeenCalled();
   });
-  it('webhook: returns 429 with retry-after before reading the body or checking the signature', async () => {
-    for (let i = 0; i < RATE_LIMITS.webhook.limit; i++) await rateLimit('webhook', '203.0.113.9', state.repo!);
-    const request = webhookRequest(); const text = vi.spyOn(request, 'text');
+  it('webhook: counts missing and invalid signatures, then returns 429 on hit 61', async () => {
+    expect((await webhookPost(webhookRequest({ 'x-forwarded-for': '203.0.113.9', 'x-hub-signature-256': 'invalid' }))).status).toBe(401);
+    for (let i = 1; i < RATE_LIMITS.webhook.limit; i++) expect((await webhookPost(webhookRequest())).status).toBe(401);
+    const request = webhookRequest();
     const response = await webhookPost(request);
-    expect(response.status).toBe(429); expect(response.headers.get('retry-after')).toBe('60'); expect(request.bodyUsed).toBe(false); expect(text).not.toHaveBeenCalled();
+    expect(response.status).toBe(429); expect(response.headers.get('retry-after')).toBe('60'); expect(request.bodyUsed).toBe(true);
+    expect([...((state.repo as MemoryRepository).rateLimits.values())][0]).toMatchObject({ count: RATE_LIMITS.webhook.limit + 1, blocked: 1 });
   });
-  it('webhook: under the limit it still verifies the signature', async () => {
-    expect((await webhookPost(webhookRequest())).status).toBe(401);
-    const body = '{}'; expect((await webhookPost(webhookRequest({ 'x-forwarded-for': '203.0.113.9', 'x-hub-signature-256': signBody(body, 'secret') }, body))).status).not.toBe(429);
+  it('webhook: valid signed events never touch the counter, even after bad requests reach the limit', async () => {
+    const body = '{"entry":[]}';
+    const signed = () => webhookRequest({ 'x-forwarded-for': '203.0.113.9', 'x-hub-signature-256': signBody(body, 'secret') }, body);
+    for (let i = 0; i < RATE_LIMITS.webhook.limit + 1; i++) expect((await webhookPost(signed())).status).toBe(200);
+    expect((state.repo as MemoryRepository).rateLimits.size).toBe(0);
+    for (let i = 0; i < RATE_LIMITS.webhook.limit + 1; i++) await webhookPost(webhookRequest());
+    expect((await webhookPost(signed())).status).toBe(200);
+    expect([...((state.repo as MemoryRepository).rateLimits.values())][0].count).toBe(RATE_LIMITS.webhook.limit + 1);
   });
   it('webhook: fails open when the counter errors', async () => {
     state.repo = new FailingRepository();
@@ -132,6 +139,7 @@ describe('call sites', () => {
 });
 
 describe('health field', () => {
+  const request = () => new Request('https://x.test/api/health', { headers: { 'x-forwarded-for': '203.0.113.9' } });
   const account = { state: 'not_tested', token_expires_at: '2099-01-01T00:00:00Z', access_token_enc: 'enc' };
   const client = (blocked: () => Promise<unknown>) => ({
     from: () => ({ select: () => ({ order: () => ({ limit: () => ({ maybeSingle: async () => ({ data: account, error: null }) }) }) }) }),
@@ -139,16 +147,29 @@ describe('health field', () => {
   });
   it('reports the blocked count as an integer', async () => {
     state.db.mockReturnValue(client(async () => ({ data: 7, error: null })));
-    expect(await (await health()).json()).toMatchObject({ ok: true, db: true, rate_limit_blocked_last_hour: 7 });
+    expect(await (await health(request())).json()).toMatchObject({ ok: true, db: true, rate_limit_blocked_last_hour: 7 });
   });
   it('reports 0 and stays healthy when the count errors or throws', async () => {
     state.db.mockReturnValue(client(async () => ({ data: null, error: { message: 'boom' } })));
-    expect(await (await health()).json()).toMatchObject({ db: true, jobs_scheduled: true, rate_limit_blocked_last_hour: 0 });
+    expect(await (await health(request())).json()).toMatchObject({ db: true, jobs_scheduled: true, rate_limit_blocked_last_hour: 0 });
     state.db.mockReturnValue(client(async () => { throw new Error('boom'); }));
-    expect(await (await health()).json()).toMatchObject({ db: true, rate_limit_blocked_last_hour: 0 });
+    expect(await (await health(request())).json()).toMatchObject({ db: true, rate_limit_blocked_last_hour: 0 });
   });
   it('reports 0 when the database is down', async () => {
     state.db.mockImplementation(() => { throw new Error('down'); });
-    expect(await (await health()).json()).toMatchObject({ db: false, rate_limit_blocked_last_hour: 0 });
+    expect(await (await health(request())).json()).toMatchObject({ db: false, rate_limit_blocked_last_hour: 0 });
+  });
+  it('allows 60 requests, blocks the next from the same address before health database calls', async () => {
+    state.db.mockReturnValue(client(async () => ({ data: 0, error: null })));
+    for (let i = 0; i < RATE_LIMITS.health.limit; i++) expect((await health(request())).status).toBe(200);
+    expect(state.db).toHaveBeenCalledTimes(RATE_LIMITS.health.limit);
+    const response = await health(request());
+    expect(response.status).toBe(429); expect(response.headers.get('retry-after')).toBe('60');
+    expect(state.db).toHaveBeenCalledTimes(RATE_LIMITS.health.limit);
+  });
+  it('fails open when the health counter is unavailable', async () => {
+    state.repo = new FailingRepository(); state.db.mockReturnValue(client(async () => ({ data: 0, error: null })));
+    const response = await health(request());
+    expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ ok: true, db: true });
   });
 });

@@ -100,7 +100,7 @@ Keep `META_MOCK=1` locally; no call goes to Meta. Never commit an env file.
 
 ## Security
 
-HMAC-verified webhooks, a constant-time job secret, an admin allow-list with roles, deny-by-default Row Level Security, encrypted token storage and hashed opt-outs. Public routes (login, webhook, job runner) are rate limited per source address in the database (migration `0006`, defaults in `src/lib/rate-limit.ts`); this is abuse control, not DDoS protection. Details and known gaps are in [SECURITY.md](SECURITY.md). Report vulnerabilities through GitHub private vulnerability reporting. See also [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/META-API-NOTES.md](docs/META-API-NOTES.md).
+HMAC-verified webhooks, a constant-time job secret, an admin allow-list with roles, deny-by-default Row Level Security, encrypted token storage and hashed opt-outs. Public routes (login, bad-signature webhooks, job runner, health) are rate limited per source address in the database (migration `0006`, defaults in `src/lib/rate-limit.ts`); valid signed Meta events never consume the webhook limit. This is abuse control, not DDoS protection. Details and known gaps are in [SECURITY.md](SECURITY.md). Report vulnerabilities through GitHub private vulnerability reporting. See also [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/META-API-NOTES.md](docs/META-API-NOTES.md).
 
 ## Attribution and license
 
