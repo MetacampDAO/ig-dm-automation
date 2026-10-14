@@ -16,13 +16,16 @@ export function clientKey(headers: Headers): string {
   const forwarded = headers.get('x-forwarded-for')?.split(',')[0]?.trim();
   return (forwarded || headers.get('x-real-ip')?.trim() || 'unknown').slice(0, MAX_KEY_LENGTH);
 }
-export async function rateLimit(route: RateLimitRoute, key: string, repo?: Repository): Promise<boolean> {
+export type RateLimitStatus = 'allowed' | 'blocked' | 'unavailable';
+// 'unavailable' means the counter itself failed on a fail-closed route; fail-open routes report 'allowed' in that case.
+export async function checkRateLimit(route: RateLimitRoute, key: string, repo?: Repository): Promise<RateLimitStatus> {
   const { limit, window } = RATE_LIMITS[route];
   try {
-    return (await (repo ?? new SupabaseRepository()).rateLimitHit(key, route, limit, window)).allowed;
+    return (await (repo ?? new SupabaseRepository()).rateLimitHit(key, route, limit, window)).allowed ? 'allowed' : 'blocked';
   } catch (error) {
     console.error('Rate limit check failed', route, error instanceof Error ? error.message : String(error));
-    return !FAIL_CLOSED.has(route);
+    return FAIL_CLOSED.has(route) ? 'unavailable' : 'allowed';
   }
 }
+export async function rateLimit(route: RateLimitRoute, key: string, repo?: Repository): Promise<boolean> { return await checkRateLimit(route, key, repo) === 'allowed'; }
 export function tooManyRequests(): Response { return new Response('Too Many Requests', { status: 429, headers: { 'retry-after': '60' } }); }

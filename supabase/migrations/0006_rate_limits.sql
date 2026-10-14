@@ -8,6 +8,7 @@ create table if not exists rate_limits (
   blocked integer not null default 0,
   primary key (key, route, window_start)
 );
+create index if not exists rate_limits_window_start_idx on rate_limits (window_start);
 alter table rate_limits enable row level security;
 revoke all on table rate_limits from public, anon, authenticated;
 grant select, insert, update, delete on table rate_limits to service_role;

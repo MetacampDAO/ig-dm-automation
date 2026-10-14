@@ -9,10 +9,12 @@ import { SupabaseRepository } from '@/lib/supabase-repository';
 import { DatabaseError } from '@/lib/database-error';
 import { env } from '@/lib/env';
 import { validateCampaignCopy } from '@/lib/copy';
-import { clientKey, rateLimit } from '@/lib/rate-limit';
+import { checkRateLimit, clientKey } from '@/lib/rate-limit';
 
 export async function login(form: FormData): Promise<void> {
-  if(!await rateLimit('login',clientKey(await headers()))) throw new Error('Too many attempts. Try again in a minute.');
+  const limited=await checkRateLimit('login',clientKey(await headers()));
+  if(limited==='blocked') throw new Error('Too many attempts. Try again in a minute.');
+  if(limited==='unavailable') throw new Error('Sign-in is temporarily unavailable');
   const credentials=z.object({email:z.email(),password:z.string().min(1)}).parse({email:form.get('email'),password:form.get('password')});
   const {data,error}=await anonDb().auth.signInWithPassword(credentials);
   if(error||!data.session) throw new Error('Invalid login');
