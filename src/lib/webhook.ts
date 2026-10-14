@@ -27,7 +27,7 @@ async function boundedBody(req: Request): Promise<Buffer | null> {
 }
 export async function receiveWebhook(req: Request, repo: Repository, schedule: (ids: string[]) => void, onInvalidSignature?: () => Promise<Response | undefined>): Promise<Response> {
   const bytes = await boundedBody(req);
-  if (!bytes) return new Response('Payload too large', { status: 413 });
+  if (!bytes) { const blocked = await onInvalidSignature?.(); return blocked ?? new Response('Payload too large', { status: 413 }); }
   if (!verifySignature(bytes, req.headers.get('x-hub-signature-256'), env().META_APP_SECRET)) {
     const blocked = await onInvalidSignature?.();
     return blocked ?? new Response('Unauthorized', { status: 401 });
