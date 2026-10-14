@@ -126,6 +126,12 @@ describe('call sites', () => {
     expect((await webhookPost(signed())).status).toBe(200);
     expect([...((state.repo as MemoryRepository).rateLimits.values())][0].count).toBe(RATE_LIMITS.webhook.limit + 1);
   });
+  it('webhook: counts oversized bodies like bad signatures, then returns 429', async () => {
+    const big = 'x'.repeat(1024 * 1024 + 1);
+    for (let i = 0; i < RATE_LIMITS.webhook.limit; i++) expect((await webhookPost(webhookRequest({ 'x-forwarded-for': '203.0.113.9' }, big))).status).toBe(413);
+    expect((await webhookPost(webhookRequest({ 'x-forwarded-for': '203.0.113.9' }, big))).status).toBe(429);
+    expect([...((state.repo as MemoryRepository).rateLimits.values())][0]).toMatchObject({ count: RATE_LIMITS.webhook.limit + 1, blocked: 1 });
+  });
   it('webhook: fails open when the counter errors', async () => {
     state.repo = new FailingRepository();
     expect((await webhookPost(webhookRequest())).status).toBe(401);
